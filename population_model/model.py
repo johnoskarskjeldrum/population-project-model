@@ -4,8 +4,6 @@ import pandas as pd
 import random
 from tqdm import tqdm
 
-from population_model.utils import get_age_group
-
 def create_pop(lengde, config):
     """
     Creates an initial population with a given age and sex distribution.
@@ -64,17 +62,6 @@ def get_kids(age):
     else:
         return 0
 
-def dodsfall(df, config):
-    """
-    Simulates the deaths in the population.
-    """
-    df['aldersgruppe'] = df['alder'].apply(get_age_group, args=(config['age_groups'],))
-    df['vekter'] = df['aldersgruppe'].map(config['death_rates'])
-    antall_dode = int(len(df) * 0.008)
-    dode = df.sample(n=antall_dode, weights="vekter").index
-            
-    return dode
-
 def create_kids(fruktbare_damer, asfr):
     
     age_group_barn = fruktbare_damer.merge(asfr[["alder", "asfr"]], on = "alder", how="inner", validate = "1:1")
@@ -89,7 +76,7 @@ def create_kids(fruktbare_damer, asfr):
     
     return nye_kids, age_group_barn[["alder", "barn"]]
 
-def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fodsel, innvandring=True, innvandringsgrad=0.95):
+def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fodsel, innvandring=True):
     """
     Runs the population projection simulation.
     """
@@ -107,80 +94,85 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
     df_antall = df.groupby(["alder", "sex"]).barn.count().sort_index().reset_index().rename(columns={"barn":f"pop_{2023}"})#
     befolkningsfordeling = befolkningsfordeling.merge(df_antall, on = ["alder", "sex"], how="left")
     
-    
+    # Forbered bins for pd.cut
+    age_groups = config['age_groups']
+    bins = [age_groups[key][0] for key in age_groups] + [age_groups[list(age_groups.keys())[-1]][1]]
+    labels = list(age_groups.keys())
+
     for year in tqdm(range(år_start, år_slutt)):
         # Legger til 1 i alder på hele populasjonen
         df['alder'] += 1
         
-        if "aldersgruppe" in df.columns:
-            df = df.drop("aldersgruppe", axis=1)
-        
-         # Assign weights
-        df['aldersgruppe'] = df['alder'].apply(get_age_group, args=(config['age_groups'],))
-        # Disse vektene setter sannsynlighet for død
+        # Vektoriser aldersgruppetildeling
+        df['aldersgruppe'] = pd.cut(df['alder'], bins=bins, labels=labels, right=False)
         df['vekter'] = df['aldersgruppe'].map(config['death_rates'])
         
         fruktbare_damer = df.loc[(df.alder >= yngste_fodsel) & (df.alder < eldste_fodsel) & (df.sex == "K") & (df.barn < 4)].groupby("alder")["sex"].count().reset_index()
         
         asfr["asfr"] = asfr.asfr_norm * (asfr_sum + random.randint(-4, 4))
-        # Definerer fruktbare damer
         nye_kids, age_group_df = create_kids(fruktbare_damer, asfr)
 
-        # Vi legger til barn for de ulike individene ved å legge til 
-        for index, row in age_group_df.iterrows():
+        # Vektoriser tildeling av barn
+        indices_to_increment = []
+        for _, row in age_group_df.iterrows():
             age_group = row['alder']
             num_new_kids = int(row["barn"])
-
-            # Vi velger ut individene, vi dropper å legge til barn for mennene, da det ikke har noen egen effekt på simulering
-            # Menn kan også egentlig få uendelig med barn
-            eligible_individuals = df[(df['alder'] == age_group ) & (df["sex"] == "K")]
-
-            # Sample the required number of individuals
-            sampled_indices = np.random.choice(eligible_individuals.index, num_new_kids, replace=True)
-
-            # Increment the 'barn' column for the sampled individuals
-            df.loc[sampled_indices, 'barn'] += 1
+            eligible_indices = df.index[(df['alder'] == age_group) & (df['sex'] == 'K')]
+            if not eligible_indices.empty:
+                sampled_indices = np.random.choice(eligible_indices, num_new_kids, replace=True)
+                indices_to_increment.extend(sampled_indices)
         
+        if indices_to_increment:
+            df.loc[indices_to_increment, 'barn'] += 1
 
-        # Legger til innvandring i populasjonen
+        # Legg til innvandring basert på en rate
         if innvandring:
-            if year in [0, 1]:
-                innvandrere = 30_000
-            else:
-                innvandrere = int(np.linspace(18000, 4000, 100)[year-2])
+            innvandrere = int(len(df) * config['immigration_rate'])
         else:
             innvandrere = 0
 
         innvandrere_df = create_pop(innvandrere, config)
         
-        # Define fractions to remove
-        fraction_over_90 = 1/4
-        fraction_over_100 = 1/2
+        # Effektiviser dødsfall
+        deterministic_indices_to_drop = []
         
-        # fjerner døde    
-        # Remove 1/4 of the population over 90 years old
-        over_90 = df[df['alder'] > 90]
-        sample_over_90 = over_90.sample(frac=fraction_over_90, random_state=42)
-        df = df.drop(sample_over_90.index)
+        # 1. Fjern de som har nådd maksalder
+        max_age_indices = df.index[df['alder'] >= config['max_age']]
+        if not max_age_indices.empty:
+            deterministic_indices_to_drop.extend(max_age_indices)
 
-        # Remove 1/2 of the population over 100 years old
-        over_100 = df[df['alder'] > 100]
-        sample_over_100 = over_100.sample(frac=fraction_over_100, random_state=42)
-        df = df.drop(sample_over_100.index)
-        
-        dodsrate = max(0.002, 0.008 - (((len(over_90) / 4) + (len(over_100) / 2)) / len(df)))
-        
-        dode_index = dodsfall(df, config)        
-        df = df.drop(dode_index)
+        # 2. Fjern en andel av de eldste
+        over_90_pool = df[(df['alder'] > 90) & (~df.index.isin(deterministic_indices_to_drop))]
+        if not over_90_pool.empty:
+            sample_over_90 = over_90_pool.sample(frac=1/4, random_state=42)
+            deterministic_indices_to_drop.extend(sample_over_90.index)
 
-        df = pd.concat([df, nye_kids, innvandrere_df]).reset_index(drop=True)
-        df.drop(columns=['vekter'], inplace=True)
+        over_100_pool = df[(df['alder'] > 100) & (~df.index.isin(deterministic_indices_to_drop))]
+        if not over_100_pool.empty:
+            sample_over_100 = over_100_pool.sample(frac=1/2, random_state=42)
+            deterministic_indices_to_drop.extend(sample_over_100.index)
+        
+        # 3. Beregn tilfeldige dødsfall fra resten av befolkningen
+        remaining_for_random_death_df = df.drop(list(set(deterministic_indices_to_drop)))
+        
+        dodsrate = max(0.002, 0.008 - (len(deterministic_indices_to_drop) / len(df)))
+        num_random_deaths = int(len(remaining_for_random_death_df) * dodsrate)
+        
+        all_indices_to_drop = list(set(deterministic_indices_to_drop))
+        if num_random_deaths > 0:
+            random_death_indices = remaining_for_random_death_df.sample(n=num_random_deaths, weights="vekter").index
+            all_indices_to_drop.extend(random_death_indices)
 
-        df_antall = df.groupby(["alder", "sex"]).barn.count().sort_index().reset_index().rename(columns={"barn":f"pop_{2024+year}"})#
-        befolkningsfordeling = befolkningsfordeling.merge(df_antall, on = ["alder", "sex"], how="left")
+        df = df.drop(all_indices_to_drop)
+
+        df = pd.concat([df, nye_kids, innvandrere_df], ignore_index=True)
+        df.drop(columns=['vekter', 'aldersgruppe'], inplace=True, errors='ignore')
+
+        df_antall = df.groupby(["alder", "sex"]).size().reset_index(name=f"pop_{2024+year}")
+        befolkningsfordeling = befolkningsfordeling.merge(df_antall, on=["alder", "sex"], how="left")
         
-        liste_med_antall_personer.append(len(df))
-        print(f"Antall fødte: {len(nye_kids)}. Dødsrate: {dodsrate}. Antall døde: {len(dode_index)}. Befolkning: {len(df)}")
-        
+        antall_personer = len(df)
+        liste_med_antall_personer.append(antall_personer)
+        print(f"Antall fødte: {len(nye_kids)}. Dødsrate: {dodsrate}. Antall døde: {len(all_indices_to_drop)}. Befolkning: {antall_personer}")
         
     return liste_med_antall_personer, befolkningsfordeling, df

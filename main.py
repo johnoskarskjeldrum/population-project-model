@@ -14,7 +14,11 @@ def main():
     data_path = Path('data')
 
     # Load initial population
-    start_pop = load_population(data_path / 'startpop_no.csv')
+    use_test_population = True  # Set to True to use the test population, False for the full population
+    if use_test_population:
+        start_pop = load_population(data_path / 'startpop_no_test.csv')
+    else:
+        start_pop = load_population(data_path / 'startpop_no.csv')
 
     # Set simulation parameters
     år_start = 2023
@@ -24,21 +28,24 @@ def main():
     eldste_fødsel = 49
     tfrs = [1.5]
 
+    # Determine filename prefix
+    filename_prefix = "test_" if use_test_population else ""
+
     # Run simulation for each TFR
     for tfr in tfrs:
         df_for_run = start_pop.copy()
         utv = [len(start_pop)]
         utvikling, pop_fordeling, df = run_simulation(
-            df_for_run, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel
+            df_for_run, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel, innvandring=False
         )
         
         # Save results
         pop_fordeling.to_csv(
-            data_path / f"popfordeling_{år_start}-{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
+            data_path / f"{filename_prefix}popfordeling_{år_start}-{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
             index=False
         )
         df.to_csv(
-            data_path / f"populasjon_{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
+            data_path / f"{filename_prefix}populasjon_{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
             index=False
         )
         utv.extend(utvikling)
@@ -47,7 +54,7 @@ def main():
             f'pop_{tfr}': utv
         })
         befolkningsutvikling.to_csv(
-            data_path / f"befolkningsutvikling_{år_start}_{år_slutt}_{'-'.join([str(tfr).replace('.', '_') for tfr in tfrs])}.csv",
+            data_path / f"{filename_prefix}befolkningsutvikling_{år_start}_{år_slutt}_{'-'.join([str(tfr).replace('.', '_') for tfr in tfrs])}.csv",
             index=False
         )
 
