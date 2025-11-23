@@ -1,5 +1,6 @@
 
 import pandas as pd
+import argparse
 from pathlib import Path
 
 from population_model.data_manager import load_config, load_population, save_population
@@ -13,8 +14,13 @@ def main():
     config = load_config('config.yaml')
     data_path = Path('data')
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Run population projection model.")
+    parser.add_argument('--test', action='store_true', help='Use test population data for a faster run.')
+    args = parser.parse_args()
+
     # Load initial population
-    use_test_population = True  # Set to True to use the test population, False for the full population
+    use_test_population = args.test
     if use_test_population:
         start_pop = load_population(data_path / 'startpop_no_test.csv')
     else:

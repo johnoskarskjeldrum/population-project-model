@@ -168,7 +168,7 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
         df = pd.concat([df, nye_kids, innvandrere_df], ignore_index=True)
         df.drop(columns=['vekter', 'aldersgruppe'], inplace=True, errors='ignore')
 
-        df_antall = df.groupby(["alder", "sex"]).size().reset_index(name=f"pop_{2024+year}")
+        df_antall = df.groupby(["alder", "sex"]).size().reset_index(name=f"pop_{year+1}")
         befolkningsfordeling = befolkningsfordeling.merge(df_antall, on=["alder", "sex"], how="left")
         
         antall_personer = len(df)
