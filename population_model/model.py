@@ -179,10 +179,15 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
         for _, row in age_group_df.iterrows():
             age_group = row['alder']
             num_new_kids = int(row["barn"])
-            eligible_indices = df.index[(df['alder'] == age_group) & (df['sex'] == 'K') & (df['barn'] < 4)]
-            if not eligible_indices.empty:
-                sampled_indices = np.random.choice(eligible_indices, num_new_kids, replace=True)
-                indices_to_increment.extend(sampled_indices)
+            eligible_indices_women = df.index[(df['alder'] == age_group) & (df['sex'] == 'K') & (df['barn'] < 4)]
+            eligible_indices_men = df.index[(df['alder'] == age_group) & (df['sex'] == 'M') & (df['barn'] < 4)]
+
+            if not eligible_indices_women.empty:
+                sampled_indices_women = np.random.choice(eligible_indices_women, num_new_kids, replace=True)
+                indices_to_increment.extend(sampled_indices_women)
+            if not eligible_indices_men.empty:
+                sampled_indices_men = np.random.choice(eligible_indices_men, num_new_kids, replace=True)
+                indices_to_increment.extend(sampled_indices_men)
         
         if indices_to_increment:
             df.loc[indices_to_increment, 'barn'] += 1
