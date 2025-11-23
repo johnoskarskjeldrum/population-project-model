@@ -17,6 +17,11 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run population projection model.")
     parser.add_argument('--test', action='store_true', help='Use test population data for a faster run.')
+    parser.add_argument('--start-year', type=int, default=2023, help='Start year of the simulation (default: 2023)')
+    parser.add_argument('--years', type=int, default=100, help='Number of years to simulate (default: 100)')
+    parser.add_argument('--min-fertility-age', type=int, default=15, help='Minimum age for fertility (default: 15)')
+    parser.add_argument('--max-fertility-age', type=int, default=49, help='Maximum age for fertility (default: 49)')
+    parser.add_argument('--tfrs', type=float, nargs='+', default=[1.5], help='List of Total Fertility Rates to simulate (default: 1.5)')
     args = parser.parse_args()
 
     # Load initial population
@@ -27,12 +32,12 @@ def main():
         start_pop = load_population(data_path / 'startpop_no.csv')
 
     # Set simulation parameters
-    år_start = 2023
-    år = 100
+    år_start = args.start_year
+    år = args.years
     år_slutt = år_start + år
-    yngste_fodsel = 15
-    eldste_fødsel = 49
-    tfrs = [1.5]
+    yngste_fodsel = args.min_fertility_age
+    eldste_fødsel = args.max_fertility_age
+    tfrs = args.tfrs
 
     # Determine filename prefix
     filename_prefix = "test_" if use_test_population else ""
