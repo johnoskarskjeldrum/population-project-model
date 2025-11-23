@@ -3,6 +3,81 @@ import numpy as np
 import pandas as pd
 import random
 from tqdm import tqdm
+from pathlib import Path
+import glob
+
+CHILD_DISTRIBUTION_DATA = {}
+
+def load_child_distribution_data(data_path):
+    """
+    Loads child distribution data from CSV files in the data_barnefordeling directory.
+    """
+    global CHILD_DISTRIBUTION_DATA
+    search_path = data_path / "data_barnefordeling" / "*_Kvinnen.csv"
+    files = glob.glob(str(search_path))
+    
+    if not files:
+        print(f"Warning: No child distribution files found in {search_path}")
+        return
+
+    for file_path in files:
+        try:
+            # Extract age from filename (e.g., "20_Kvinnen.csv" -> 20)
+            age = int(Path(file_path).name.split('_')[0])
+            
+            df = pd.read_csv(file_path)
+            # Use the last row (latest year)
+            latest_row = df.iloc[-1]
+            
+            # Parse probabilities (replace comma with dot and convert to float)
+            probs = []
+            for col in ["0 barn", "1 barn", "2 barn", "3 barn", "4 barn eller flere"]:
+                val = str(latest_row[col]).replace(',', '.')
+                probs.append(float(val) / 100.0) # Convert percentage to probability
+            
+            # Normalize to ensure sum is 1.0
+            total_prob = sum(probs)
+            if total_prob > 0:
+                probs = [p / total_prob for p in probs]
+            
+            CHILD_DISTRIBUTION_DATA[age] = probs
+            
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+
+    print(f"Loaded child distribution data for ages: {sorted(CHILD_DISTRIBUTION_DATA.keys())}")
+
+def get_child_prob(age):
+    """
+    Returns the probability distribution of having 0, 1, 2, 3, 4+ children for a given age.
+    Interpolates between available data points.
+    """
+    if not CHILD_DISTRIBUTION_DATA:
+        # Fallback if data not loaded
+        return [1.0, 0, 0, 0, 0] # Default to 0 kids
+
+    available_ages = sorted(CHILD_DISTRIBUTION_DATA.keys())
+    
+    # If age is below min or above max available, use the closest
+    if age <= available_ages[0]:
+        return CHILD_DISTRIBUTION_DATA[available_ages[0]]
+    if age >= available_ages[-1]:
+        return CHILD_DISTRIBUTION_DATA[available_ages[-1]]
+    
+    # Find the two closest ages to interpolate between
+    lower_age = max([a for a in available_ages if a <= age])
+    upper_age = min([a for a in available_ages if a >= age])
+    
+    if lower_age == upper_age:
+        return CHILD_DISTRIBUTION_DATA[lower_age]
+    
+    # Linear interpolation
+    weight = (age - lower_age) / (upper_age - lower_age)
+    lower_probs = np.array(CHILD_DISTRIBUTION_DATA[lower_age])
+    upper_probs = np.array(CHILD_DISTRIBUTION_DATA[upper_age])
+    
+    interpolated_probs = (1 - weight) * lower_probs + weight * upper_probs
+    return interpolated_probs.tolist()
 
 def create_pop(lengde, config):
     """
@@ -46,21 +121,8 @@ def create_pop(lengde, config):
 
 def get_kids(age):
     values = [0, 1, 2, 3, 4]
-    
-    if age > 40:
-        return random.choices(values, weights=[14.7, 16.5,41.3,20.7,6.8], k=1)[0]
-    elif age > 35:
-        return random.choices(values, weights=[17.6,17.2,41.7,18.2,5.3], k=1)[0]
-    elif age > 30:
-        return random.choices(values, weights=[26.7,21.2,36.4,12.5,3.2], k=1)[0]
-    elif age > 25:
-        return random.choices(values, weights=[87.6,8.5,3.3,0.5,0.1,], k=1)[0]
-    elif age > 20:
-        return random.choices(values, weights=[98.8, 1.1, 0.1, 0, 0], k=1)[0]
-    elif age > 15:
-        return random.choices(values, weights=[99.5, 0.5, 0, 0, 0], k=1)[0]
-    else:
-        return 0
+    weights = get_child_prob(age)
+    return random.choices(values, weights=weights, k=1)[0]
 
 def create_kids(fruktbare_damer, asfr):
     
@@ -117,7 +179,7 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
         for _, row in age_group_df.iterrows():
             age_group = row['alder']
             num_new_kids = int(row["barn"])
-            eligible_indices = df.index[(df['alder'] == age_group) & (df['sex'] == 'K')]
+            eligible_indices = df.index[(df['alder'] == age_group) & (df['sex'] == 'K') & (df['barn'] < 4)]
             if not eligible_indices.empty:
                 sampled_indices = np.random.choice(eligible_indices, num_new_kids, replace=True)
                 indices_to_increment.extend(sampled_indices)

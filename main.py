@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from population_model.data_manager import load_config, load_population, save_population
-from population_model.model import run_simulation
+from population_model.model import run_simulation, load_child_distribution_data
 
 def main():
     """
@@ -13,6 +13,9 @@ def main():
     # Load configuration
     config = load_config('config.yaml')
     data_path = Path('data')
+    
+    # Load child distribution data
+    load_child_distribution_data(Path('.'))
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run population projection model.")
