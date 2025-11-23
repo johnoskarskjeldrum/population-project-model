@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--min-fertility-age', type=int, default=15, help='Minimum age for fertility (default: 15)')
     parser.add_argument('--max-fertility-age', type=int, default=49, help='Maximum age for fertility (default: 49)')
     parser.add_argument('--tfrs', type=float, nargs='+', default=[1.5], help='List of Total Fertility Rates to simulate (default: 1.5)')
+    parser.add_argument('--file', default='startpop_no.csv', help='startpopulation to run')
     args = parser.parse_args()
 
     # Load initial population
@@ -32,7 +33,7 @@ def main():
     if use_test_population:
         start_pop = load_population(data_path / 'startpop_no_test.csv')
     else:
-        start_pop = load_population(data_path / 'startpop_no.csv')
+        start_pop = load_population(data_path / args.file)
 
     # Set simulation parameters
     år_start = args.start_year
