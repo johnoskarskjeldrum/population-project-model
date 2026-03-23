@@ -26,14 +26,23 @@ def main():
     parser.add_argument('--max-fertility-age', type=int, default=49, help='Maximum age for fertility (default: 49)')
     parser.add_argument('--tfrs', type=float, nargs='+', default=[1.5], help='List of Total Fertility Rates to simulate (default: 1.5)')
     parser.add_argument('--file', default='startpop_no.csv', help='startpopulation to run')
+    parser.add_argument('--start-tfr', type=float, help='The TFR of the input file (for smooth transitions).')
+    parser.add_argument('--fade-years', type=int, default=0, help='Number of years to transition from start-tfr to target-tfr.')
     args = parser.parse_args()
 
     # Load initial population
     use_test_population = args.test
     if use_test_population:
-        start_pop = load_population(data_path / 'startpop_no_test.csv')
+        pop_file = data_path / 'startpop_no_test.csv'
     else:
-        start_pop = load_population(data_path / args.file)
+        pop_file = data_path / args.file
+    
+    print(f"Loading population from: {pop_file.absolute()}")
+    start_pop = load_population(pop_file)
+    
+    # Ensure alder and barn are integers (sometimes loaded as floats from previously saved files)
+    start_pop['alder'] = start_pop['alder'].astype(int)
+    start_pop['barn'] = start_pop['barn'].astype(int)
 
     # Set simulation parameters
     år_start = args.start_year
@@ -51,7 +60,8 @@ def main():
         df_for_run = start_pop.copy()
         utv = [len(start_pop)]
         utvikling, pop_fordeling, df = run_simulation(
-            df_for_run, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel, innvandring=False
+            df_for_run, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel, 
+            innvandring=False, start_tfr=args.start_tfr, fade_years=args.fade_years
         )
         
         # Save results

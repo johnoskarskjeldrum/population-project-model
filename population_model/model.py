@@ -138,22 +138,25 @@ def create_kids(fruktbare_damer, asfr):
     
     return nye_kids, age_group_barn[["alder", "barn"]]
 
-def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fodsel, innvandring=True):
+def run_simulation(df, config, target_tfr, år_start, år_slutt, yngste_fodsel, eldste_fodsel, innvandring=True, start_tfr=None, fade_years=0):
     """
     Runs the population projection simulation.
     """
     liste_med_antall_personer = []
 
-    # Setter ASFT for de ulike aldersgruppene
-    asfr_sum = (tfr) * 1000
+    # If no start_tfr is provided, we assume no fade (instant jump to target_tfr)
+    if start_tfr is None:
+        start_tfr = target_tfr
+
+    # Pre-load ASFR normalization
     asfr = pd.DataFrame(list(config['asfr_norm_avg'].items()), columns=['alder', 'asfr_norm'])
-    asfr["asfr"] = asfr.asfr_norm * asfr_sum
     
     # Create a DataFrame for each sex and age combination
     befolkning_start = {'sex': ['K'] * 110 + ['M'] * 110, 'alder': list(range(110)) * 2}
     befolkningsfordeling = pd.DataFrame(befolkning_start)
     
-    df_antall = df.groupby(["alder", "sex"]).barn.count().sort_index().reset_index().rename(columns={"barn":f"pop_{2023}"})#
+    df_antall = df.groupby(["alder", "sex"]).size().reset_index(name=f"pop_{år_start}")
+
     befolkningsfordeling = befolkningsfordeling.merge(df_antall, on = ["alder", "sex"], how="left")
     
     # Forbered bins for pd.cut
@@ -161,7 +164,16 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
     bins = [age_groups[key][0] for key in age_groups] + [age_groups[list(age_groups.keys())[-1]][1]]
     labels = list(age_groups.keys())
 
-    for year in tqdm(range(år_start, år_slutt)):
+    for i, year in enumerate(tqdm(range(år_start, år_slutt))):
+        # Calculate current TFR for this year (linear interpolation during fade)
+        if fade_years > 0 and i < fade_years:
+            current_tfr = start_tfr + (target_tfr - start_tfr) * (i / fade_years)
+        else:
+            current_tfr = target_tfr
+
+        asfr_sum = current_tfr * 1000
+        asfr["asfr"] = asfr.asfr_norm * (asfr_sum + random.randint(-4, 4))
+
         # Legger til 1 i alder på hele populasjonen
         df['alder'] += 1
         
@@ -171,7 +183,6 @@ def run_simulation(df, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_
         
         fruktbare_damer = df.loc[(df.alder >= yngste_fodsel) & (df.alder < eldste_fodsel) & (df.sex == "K") & (df.barn < 4)].groupby("alder")["sex"].count().reset_index()
         
-        asfr["asfr"] = asfr.asfr_norm * (asfr_sum + random.randint(-4, 4))
         nye_kids, age_group_df = create_kids(fruktbare_damer, asfr)
 
         # Vektoriser tildeling av barn
