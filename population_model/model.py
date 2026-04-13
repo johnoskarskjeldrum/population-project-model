@@ -86,11 +86,12 @@ def create_pop(lengde, config):
     # Definer aldersintervaller og tilhørende sannsynligheter
     alder_intervaller = list(config['age_groups'].values())
     
+    # Justert for å reflektere at innvandrere typisk er unge voksne (spesielt 20-35 år)
     sannsynligheter = [
-        0.04974, 0.05486, 0.05956, 0.06003, 0.06034, 0.06653,
-        0.07160, 0.06885, 0.06543, 0.06432, 0.06860, 0.06561,
-        0.05785, 0.05281, 0.04631, 0.04137, 0.02441, 0.01356,
-        0.00630, 0.00171, 0.00023
+        0.02, 0.03, 0.04, 0.08, 0.18, 0.22, # 0-4 til 25-29
+        0.18, 0.10, 0.06, 0.04, 0.02, 0.01, # 30-34 til 55-59
+        0.005, 0.005, 0.005, 0.003, 0.001, 0.001, # 60-64 til 85-89
+        0.000, 0.000, 0.000 # 90+
     ]
 
     # Normaliser sannsynlighetene slik at de summerer til 1
@@ -159,10 +160,23 @@ def run_simulation(df, config, target_tfr, år_start, år_slutt, yngste_fodsel, 
 
     befolkningsfordeling = befolkningsfordeling.merge(df_antall, on = ["alder", "sex"], how="left")
     
-    # Forbered bins for pd.cut
-    age_groups = config['age_groups']
-    bins = [age_groups[key][0] for key in age_groups] + [age_groups[list(age_groups.keys())[-1]][1]]
-    labels = list(age_groups.keys())
+    # Generer dødsannsynligheter for hvert enkelt år (0 til 120)
+    max_possible_age = 120
+    death_probs = np.zeros(max_possible_age + 1)
+    for age in range(max_possible_age + 1):
+        if age < 60:
+            death_probs[age] = 0.001
+        elif age < 90:
+            # Gradvis økning fra 60 til 90 (når ca 12% ved 90)
+            death_probs[age] = 0.001 * np.exp(0.13 * (age - 60))
+        else:
+            # Veldig bratt økning etter 90 år (biologisk grense)
+            # 90 år = ~12%, 100 år = ~35%, 105 år = ~60%
+            base_90 = 0.12
+            death_probs[age] = base_90 + ((age - 90) * 0.035) 
+            
+    death_probs[death_probs > 1.0] = 1.0
+    death_probs[config.get('max_age', 110):] = 1.0 # Tving død ved maksalder
 
     for i, year in enumerate(tqdm(range(år_start, år_slutt))):
         # Calculate current TFR for this year (linear interpolation during fade)
@@ -177,31 +191,24 @@ def run_simulation(df, config, target_tfr, år_start, år_slutt, yngste_fodsel, 
         # Legger til 1 i alder på hele populasjonen
         df['alder'] += 1
         
-        # Vektoriser aldersgruppetildeling
-        df['aldersgruppe'] = pd.cut(df['alder'], bins=bins, labels=labels, right=False)
-        df['vekter'] = df['aldersgruppe'].map(config['death_rates'])
-        
         fruktbare_damer = df.loc[(df.alder >= yngste_fodsel) & (df.alder < eldste_fodsel) & (df.sex == "K") & (df.barn < 4)].groupby("alder")["sex"].count().reset_index()
         
         nye_kids, age_group_df = create_kids(fruktbare_damer, asfr)
 
-        # Vektoriser tildeling av barn
+        # Vektoriser tildeling av barn (kun til kvinner for å unngå dobbelttelling og fikse fordeling)
         indices_to_increment = []
         for _, row in age_group_df.iterrows():
             age_group = row['alder']
             num_new_kids = int(row["barn"])
             eligible_indices_women = df.index[(df['alder'] == age_group) & (df['sex'] == 'K') & (df['barn'] < 4)]
-            eligible_indices_men = df.index[(df['alder'] == age_group) & (df['sex'] == 'M') & (df['barn'] < 4)]
 
             if not eligible_indices_women.empty:
                 sampled_indices_women = np.random.choice(eligible_indices_women, num_new_kids, replace=True)
                 indices_to_increment.extend(sampled_indices_women)
-            if not eligible_indices_men.empty:
-                sampled_indices_men = np.random.choice(eligible_indices_men, num_new_kids, replace=True)
-                indices_to_increment.extend(sampled_indices_men)
         
         if indices_to_increment:
-            df.loc[indices_to_increment, 'barn'] += 1
+            counts = pd.Series(indices_to_increment).value_counts()
+            df.loc[counts.index, 'barn'] += counts.values
 
         # Legg til innvandring basert på en rate
         if innvandring:
@@ -211,46 +218,25 @@ def run_simulation(df, config, target_tfr, år_start, år_slutt, yngste_fodsel, 
 
         innvandrere_df = create_pop(innvandrere, config)
         
-        # Effektiviser dødsfall
-        deterministic_indices_to_drop = []
+        # Vektoriserte dødsfall ved bruk av numpy
+        # Klipp alder for å ikke overskride maksimum i death_probs
+        clipped_alder = np.clip(df['alder'].values, 0, max_possible_age).astype(int)
+        current_death_probs = death_probs[clipped_alder]
         
-        # 1. Fjern de som har nådd maksalder
-        max_age_indices = df.index[df['alder'] >= config['max_age']]
-        if not max_age_indices.empty:
-            deterministic_indices_to_drop.extend(max_age_indices)
-
-        # 2. Fjern en andel av de eldste
-        over_90_pool = df[(df['alder'] > 90) & (~df.index.isin(deterministic_indices_to_drop))]
-        if not over_90_pool.empty:
-            sample_over_90 = over_90_pool.sample(frac=1/4, random_state=42)
-            deterministic_indices_to_drop.extend(sample_over_90.index)
-
-        over_100_pool = df[(df['alder'] > 100) & (~df.index.isin(deterministic_indices_to_drop))]
-        if not over_100_pool.empty:
-            sample_over_100 = over_100_pool.sample(frac=1/2, random_state=42)
-            deterministic_indices_to_drop.extend(sample_over_100.index)
+        # Trekk tilfeldige tall for hver person og sjekk hvem som dør
+        random_draws = np.random.rand(len(df))
+        survivors_mask = random_draws > current_death_probs
         
-        # 3. Beregn tilfeldige dødsfall fra resten av befolkningen
-        remaining_for_random_death_df = df.drop(list(set(deterministic_indices_to_drop)))
-        
-        dodsrate = max(0.002, 0.008 - (len(deterministic_indices_to_drop) / len(df)))
-        num_random_deaths = int(len(remaining_for_random_death_df) * dodsrate)
-        
-        all_indices_to_drop = list(set(deterministic_indices_to_drop))
-        if num_random_deaths > 0:
-            random_death_indices = remaining_for_random_death_df.sample(n=num_random_deaths, weights="vekter").index
-            all_indices_to_drop.extend(random_death_indices)
-
-        df = df.drop(all_indices_to_drop)
+        all_indices_to_drop = df.index[~survivors_mask]
+        df = df[survivors_mask]
 
         df = pd.concat([df, nye_kids, innvandrere_df], ignore_index=True)
-        df.drop(columns=['vekter', 'aldersgruppe'], inplace=True, errors='ignore')
 
         df_antall = df.groupby(["alder", "sex"]).size().reset_index(name=f"pop_{year+1}")
         befolkningsfordeling = befolkningsfordeling.merge(df_antall, on=["alder", "sex"], how="left")
         
         antall_personer = len(df)
         liste_med_antall_personer.append(antall_personer)
-        print(f"Antall fødte: {len(nye_kids)}. Dødsrate: {dodsrate}. Antall døde: {len(all_indices_to_drop)}. Befolkning: {antall_personer}")
+        print(f"Antall fødte: {len(nye_kids)}. Antall døde: {len(all_indices_to_drop)}. Befolkning: {antall_personer}")
         
     return liste_med_antall_personer, befolkningsfordeling, df
