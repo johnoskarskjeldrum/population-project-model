@@ -3,7 +3,7 @@ import pandas as pd
 import argparse
 from pathlib import Path
 
-from population_model.data_manager import load_config, load_population, save_population
+from population_model.data_manager import load_config, load_population, load_death_probs, load_projected_death_probs
 from population_model.model import run_simulation, load_child_distribution_data
 
 def main():
@@ -28,6 +28,9 @@ def main():
     parser.add_argument('--file', default='startpop_no.csv', help='startpopulation to run')
     parser.add_argument('--start-tfr', type=float, help='The TFR of the input file (for smooth transitions).')
     parser.add_argument('--fade-years', type=int, default=0, help='Number of years to transition from start-tfr to target-tfr.')
+    parser.add_argument('--seed', type=int, default=42, help='Seed for the random number generator (default: 42)')
+    parser.add_argument('--projected-mortality', action='store_true', help='Use projected death probabilities (SSB 2026, medium alternative) instead of constant 2023 mortality.')
+    parser.add_argument('--net-immigration', type=int, default=0, help='Net immigrants added each year (default: 0)')
     args = parser.parse_args()
 
     # Load initial population
@@ -44,6 +47,8 @@ def main():
     start_pop['alder'] = start_pop['alder'].astype(int)
     start_pop['barn'] = start_pop['barn'].astype(int)
 
+    death_probs = load_death_probs(data_path / config['death_probs_file'], config['max_age'])
+
     # Set simulation parameters
     år_start = args.start_year
     år = args.years
@@ -52,36 +57,47 @@ def main():
     eldste_fødsel = args.max_fertility_age
     tfrs = args.tfrs
 
-    # Determine filename prefix
+    # Dødssannsynligheter for hvert simulerte år
+    if args.projected_mortality:
+        death_probs = load_projected_death_probs(
+            data_path / config['projected_death_probs_file'], death_probs, range(år_start, år_slutt)
+        )
+    else:
+        death_probs = {year: death_probs for year in range(år_start, år_slutt)}
+
+    # Determine filename prefix and suffix
     filename_prefix = "test_" if use_test_population else ""
+    filename_suffix = ""
+    if args.projected_mortality:
+        filename_suffix += "_ssbdod"
+    if args.net_immigration:
+        filename_suffix += f"_innv{args.net_immigration}"
 
     # Run simulation for each TFR
+    befolkningsutvikling = pd.DataFrame({'år': range(år_start, år_slutt + 1)})
     for tfr in tfrs:
         df_for_run = start_pop.copy()
-        utv = [len(start_pop)]
         utvikling, pop_fordeling, df = run_simulation(
-            df_for_run, config, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel, 
-            innvandring=False, start_tfr=args.start_tfr, fade_years=args.fade_years
+            df_for_run, config, death_probs, tfr, år_start, år_slutt, yngste_fodsel, eldste_fødsel, 
+            netto_innvandring=args.net_immigration, start_tfr=args.start_tfr, fade_years=args.fade_years,
+            seed=args.seed
         )
         
         # Save results
         pop_fordeling.to_csv(
-            data_path / f"{filename_prefix}popfordeling_{år_start}-{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
+            data_path / f"{filename_prefix}popfordeling_{år_start}-{år_slutt}_tfr{str(tfr).replace('.','_')}{filename_suffix}.csv", 
             index=False
         )
         df.to_csv(
-            data_path / f"{filename_prefix}populasjon_{år_slutt}_tfr{str(tfr).replace('.','_')}.csv", 
+            data_path / f"{filename_prefix}populasjon_{år_slutt}_tfr{str(tfr).replace('.','_')}{filename_suffix}.csv", 
             index=False
         )
-        utv.extend(utvikling)
-        befolkningsutvikling = pd.DataFrame({
-            'år': range(år_start, år_slutt + 1),
-            f'pop_{tfr}': utv
-        })
-        befolkningsutvikling.to_csv(
-            data_path / f"{filename_prefix}befolkningsutvikling_{år_start}_{år_slutt}_{'-'.join([str(tfr).replace('.', '_') for tfr in tfrs])}.csv",
-            index=False
-        )
+        befolkningsutvikling[f'pop_{tfr}'] = [len(start_pop)] + utvikling
+
+    befolkningsutvikling.to_csv(
+        data_path / f"{filename_prefix}befolkningsutvikling_{år_start}_{år_slutt}_{'-'.join([str(tfr).replace('.', '_') for tfr in tfrs])}{filename_suffix}.csv",
+        index=False
+    )
 
 if __name__ == '__main__':
     main()

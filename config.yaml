@@ -1,7 +1,15 @@
 # Configuration file for the population projection model
 
 max_age: 110
-immigration_rate: 0.003
+
+# Andel gutter blant nyfødte (ca. 105 gutter per 100 jenter)
+share_boys_at_birth: 0.513
+
+# Dødssannsynligheter per kjønn og ettårig alder (SSB tabell 07902, 2023), i data/
+death_probs_file: dodelighet_2023.csv
+
+# Framskrevne dødssannsynligheter (SSB tabell 14745, middels levealder, 2026-framskrivingen)
+projected_death_probs_file: dodelighet_framskrevet_ssb_2026.csv
 
 # Age groups
 age_groups:
@@ -68,28 +76,6 @@ age_groups:
   100+:
   - 100
   - 120
-death_rates:
-  0-4: 0.00051
-  5-9: 0.000055
-  10-14: 0.000075
-  15-19: 0.000285
-  20-24: 0.000335
-  25-29: 0.000465
-  30-34: 0.00047
-  35-39: 0.00062
-  40-44: 0.000905
-  45-49: 0.0013
-  50-54: 0.00211
-  55-59: 0.00333
-  60-64: 0.005425
-  65-69: 0.00969
-  70-74: 0.01603
-  75-79: 0.028625
-  80-84: 0.05139
-  85-89: 0.101115
-  90-94: 0.23307
-  95-99: 0.5
-  100+: 0.85
 asfr_norm_avg:
   15: 2.23e-05
   16: 0.00015456666081951678

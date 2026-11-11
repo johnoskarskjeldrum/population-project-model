@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+__MACOSX/
+
+# Genereres av main.py (se README)
+data/populasjon_*.csv
+data.zip
